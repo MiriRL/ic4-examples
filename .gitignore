@@ -360,3 +360,6 @@ vcpkg_installed/
 
 # Visual Studio Code user files
 .vscode
+
+# Conda environments
+.conda/
