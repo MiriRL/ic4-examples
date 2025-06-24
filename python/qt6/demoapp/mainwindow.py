@@ -9,6 +9,8 @@ import imagingcontrol4 as ic4
 
 from resourceselector import ResourceSelector
 
+from colorcollector import ColorCollector
+
 GOT_PHOTO_EVENT = QEvent.Type(QEvent.Type.User + 1)
 DEVICE_LOST_EVENT = QEvent.Type(QEvent.Type.User + 2)
 
@@ -151,6 +153,10 @@ class MainWindow(QMainWindow):
         self.codec_property_act.setStatusTip("Configure the video codec")
         self.codec_property_act.triggered.connect(self.onCodecProperties)
 
+        self.start_color_collection = QAction("Start Color Collection", self)
+        self.start_color_collection.setStatusTip("Open the color collection UI for optimizing the camera settings")
+        self.start_color_collection.triggered.connect(self.startColorCollection)
+
         self.close_device_act = QAction("Close", self)
         self.close_device_act.setStatusTip("Close the currently opened device")
         self.close_device_act.setShortcuts(QKeySequence.Close)
@@ -195,6 +201,7 @@ class MainWindow(QMainWindow):
         toolbar.addAction(self.record_pause_act)
         toolbar.addAction(self.record_stop_act)
         toolbar.addAction(self.codec_property_act)
+        toolbar.addAction(self.start_color_collection)
 
         self.video_widget = ic4.pyside6.DisplayWidget()
         self.video_widget.setMinimumSize(640, 480)
@@ -440,3 +447,14 @@ class MainWindow(QMainWindow):
                     image_buffer.save_as_tiff(full_path)
             except ic4.IC4Exception as e:
                 QMessageBox.critical(self, "", f"{e}", QMessageBox.StandardButton.Ok)
+
+    def startColorCollection(self):
+        self.color_window = ColorCollector()
+        self.color_window.show()
+
+    def mousePressEvent(self, event):
+        if self.color_window is None:
+            return
+        if event.button() == Qt.RightButton:
+            self.color_window.get_colors_at_cursor(event.globalPos())
+            print("Mouse clicked at position: ", event.globalPos()) #TODO: should probably switch this to be a window local coordinate
