@@ -20,6 +20,7 @@ class GotPhotoEvent(QEvent):
         self.image_buffer = buffer
 
 class MainWindow(QMainWindow):
+    curr_image_array = None
 
     def __init__(self):
         QMainWindow.__init__(self)
@@ -55,6 +56,8 @@ class MainWindow(QMainWindow):
 
             def frames_queued(listener, sink: ic4.QueueSink):
                 buf = sink.pop_output_buffer()
+
+                self.curr_image_array = buf.numpy_copy()
 
                 # Connect the buffer's chunk data to the device's property map
                 # This allows for properties backed by chunk data to be updated
