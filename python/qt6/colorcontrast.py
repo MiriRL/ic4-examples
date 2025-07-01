@@ -15,7 +15,7 @@ import pyqtgraph.exporters
 class CameraApp(QMainWindow):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("Live RGB Histograms - ImagingControl4")
+        self.setWindowTitle("Live RGB Histograms - ImagingControl4 (with Grabber)")
 
         # === UI Elements ===
         self.image_label = QLabel()
@@ -64,7 +64,7 @@ class CameraApp(QMainWindow):
         self.setCentralWidget(container)
 
         # App state
-        self.device = None
+        self.grabber: ic4.Grabber | None = None
         self.points = []
 
         # Timer for updating camera feed
@@ -75,15 +75,16 @@ class CameraApp(QMainWindow):
     def select_camera(self):
         dialog = ic4ui.DeviceSelectionDialog()
         if dialog.exec():
-            if self.device:
-                self.device.stop_live()
-                self.device.close()
-            self.device = dialog.device
-            self.device.start_live()
+            if self.grabber:
+                self.grabber.stop_live()
+                self.grabber.close()
+            self.grabber = dialog.grabber
+            self.grabber.stream_format = self.grabber.stream_formats[0]  # RGB24 by default
+            self.grabber.start_live(show_display=False)
 
     def open_properties(self):
-        if self.device:
-            ic4ui.PropertyDialog(self.device).exec()
+        if self.grabber:
+            ic4ui.PropertyDialog(self.grabber).exec()
 
     def reset_points(self):
         self.points.clear()
@@ -96,10 +97,10 @@ class CameraApp(QMainWindow):
             self.reset_points()
 
     def update_frame(self):
-        if not self.device:
+        if not self.grabber or not self.grabber.is_live:
             return
 
-        frame = self.device.get_image(timeout=1000)
+        frame = self.grabber.snap_image(timeout=1000)
         if frame is None:
             return
 
@@ -125,7 +126,7 @@ class CameraApp(QMainWindow):
             self.update_histogram(img)
 
     def update_histogram(self, img):
-        region_size = 5  # half size
+        region_size = 5
         chans = {'r': [], 'g': [], 'b': []}
 
         for pt in self.points:
@@ -151,7 +152,6 @@ class CameraApp(QMainWindow):
         if not filename:
             return
 
-        # Combine histograms into one exportable layout
         export_layout = pg.GraphicsLayout()
         export_layout.addItem(self.hist_r.plotItem)
         export_layout.nextRow()
@@ -164,9 +164,9 @@ class CameraApp(QMainWindow):
         print(f"Histogram saved to: {filename}")
 
     def closeEvent(self, event):
-        if self.device:
-            self.device.stop_live()
-            self.device.close()
+        if self.grabber:
+            self.grabber.stop_live()
+            self.grabber.close()
         super().closeEvent(event)
 
 
