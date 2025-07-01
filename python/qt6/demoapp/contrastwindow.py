@@ -11,7 +11,7 @@ from resourceselector import ResourceSelector
 
 DEVICE_LOST_EVENT = QEvent.Type(QEvent.Type.User + 2)
 
-class ClickableDisplayWidget(DisplayWidget):
+class ClickableDisplayWidget(ic4.DisplayWidget):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
     
