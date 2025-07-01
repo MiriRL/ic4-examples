@@ -1,19 +1,23 @@
 
 from threading import Lock
 
-from PySide6.QtCore import QStandardPaths, QDir, QTimer, QEvent, QFileInfo, Qt, QCoreApplication
-from PySide6.QtGui import QAction, QKeySequence, QCloseEvent
-from PySide6.QtWidgets import QMainWindow, QMessageBox, QLabel, QApplication, QFileDialog, QToolBar
+from PySide6.QtCore import QTimer, QEvent, Qt
+from PySide6.QtGui import QAction, QKeySequence, QCloseEvent, QImage, QPixmap, QPainter, QPen
+from PySide6.QtWidgets import QMainWindow, QMessageBox, QLabel, QApplication, QFileDialog, QToolBar, QVBoxLayout, QWidget
 
 import imagingcontrol4 as ic4
+import pyqtgraph as pg
+import numpy as np
 
 from resourceselector import ResourceSelector
 
 DEVICE_LOST_EVENT = QEvent.Type(QEvent.Type.User + 2)
 
-class ClickableDisplayWidget(ic4.DisplayWidget):
+class ClickableDisplayWidget(ic4.pyside6.DisplayWidget):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
+        self.image_width = self.width()
+        self.image_height = self.height()
     
     def mousePressEvent(self, event):
         # Get mouse position relative to the widget
@@ -27,8 +31,6 @@ class ClickableDisplayWidget(ic4.DisplayWidget):
         rel_x = pos.x() / widget_width
         rel_y = pos.y() / widget_height
 
-        print(f"Mouse clicked at: {pos.x()}, {pos.y()} (relative: {rel_x:.2f}, {rel_y:.2f})")
-
         img_x = int(rel_x * self.image_width)
         img_y = int(rel_y * self.image_height)
         print(f"Image pixel coordinates: ({img_x}, {img_y})")
@@ -36,9 +38,7 @@ class ClickableDisplayWidget(ic4.DisplayWidget):
         super().mousePressEvent(event)  # Pass the event to base class
 
 class MainWindow(QMainWindow):
-    curr_image_array = None,
-    image_width,
-    image_height
+    curr_image_array = None
 
     def __init__(self):
         QMainWindow.__init__(self)
@@ -69,12 +69,13 @@ class MainWindow(QMainWindow):
         self.sink = ic4.QueueSink(Listener())
 
         self.property_dialog = None
+        self.points = []
 
         self.createUI()
 
         try:
             self.display = self.video_widget.as_display()
-            self.display.set_render_position(ic4.DisplayRenderPosition.STRETCH_CENTER)
+            self.display.set_render_position(ic4.DisplayRenderPosition.STRETCH_TOPLEFT)
         except Exception as e:
             QMessageBox.critical(self, "", f"{e}", QMessageBox.StandardButton.Ok)
 
@@ -82,7 +83,7 @@ class MainWindow(QMainWindow):
         self.updateControls()
 
     def createUI(self):
-        self.resize(1024, 768)
+        self.resize(1024, 900)
 
         selector = ResourceSelector()
 
@@ -109,6 +110,14 @@ class MainWindow(QMainWindow):
         self.start_live_act.setCheckable(True)
         self.start_live_act.triggered.connect(self.startStopStream)
 
+        self.reset_btn = QAction("&Reset Points", self)
+        self.reset_btn.setStatusTip("Resest the selected points")
+        self.reset_btn.triggered.connect(self.reset_points)
+
+        self.save_btn = QAction("&Save Graphs", self)
+        self.save_btn.setStatusTip("Save the histogram graphs as images")
+        self.save_btn.triggered.connect(self.save_histogram)
+
         self.close_device_act = QAction("Close", self)
         self.close_device_act.setStatusTip("Close the currently opened device")
         self.close_device_act.setShortcuts(QKeySequence.Close)
@@ -119,6 +128,18 @@ class MainWindow(QMainWindow):
         exit_act.setStatusTip("Exit program")
         exit_act.triggered.connect(self.close)
 
+        # Create 3 stacked histogram widgets
+        self.hist_r = pg.PlotWidget(title="Red Channel")
+        self.hist_g = pg.PlotWidget(title="Green Channel")
+        self.hist_b = pg.PlotWidget(title="Blue Channel")
+        self.curve_r = self.hist_r.plot(pen='r')
+        self.curve_g = self.hist_g.plot(pen='g')
+        self.curve_b = self.hist_b.plot(pen='b')
+
+        for hist in (self.hist_r, self.hist_g, self.hist_b):
+            hist.setYRange(0, 1000)
+            hist.setXRange(0, 255)
+
         toolbar = QToolBar(self)
         self.addToolBar(Qt.TopToolBarArea, toolbar)
         toolbar.addAction(self.device_select_act)
@@ -127,10 +148,13 @@ class MainWindow(QMainWindow):
         toolbar.addAction(self.trigger_mode_act)
         toolbar.addSeparator()
         toolbar.addAction(self.start_live_act)
+        toolbar.addSeparator()
+        toolbar.addAction(self.reset_btn)
+        toolbar.addAction(self.save_btn)
 
-        self.video_widget = ic4.pyside6.DisplayWidget()
+        self.video_widget = ClickableDisplayWidget()
         self.video_widget.setMinimumSize(640, 480)
-        self.setCentralWidget(self.video_widget)
+        self.video_widget.mousePressEvent = self.on_click
 
         self.statusBar().showMessage("Ready")
         self.statistics_label = QLabel("", self.statusBar())
@@ -141,7 +165,20 @@ class MainWindow(QMainWindow):
 
         self.update_statistics_timer = QTimer()
         self.update_statistics_timer.timeout.connect(self.onUpdateStatisticsTimer)
+        self.update_statistics_timer.timeout.connect(self.update_frame)
         self.update_statistics_timer.start()
+
+        layout = QVBoxLayout()
+        layout.addWidget(self.video_widget)
+        # layout.addWidget(self.hist_r)
+        # layout.addWidget(self.hist_g)
+        # layout.addWidget(self.hist_b)
+
+        # container = QWidget()
+        # container.setLayout(layout)
+        # self.setCentralWidget(container)
+        self.setCentralWidget(self.video_widget)
+
 
     def onCloseDevice(self):
         if self.grabber.is_streaming:
@@ -160,9 +197,6 @@ class MainWindow(QMainWindow):
     def closeEvent(self, ev: QCloseEvent):
         if self.grabber.is_streaming:
             self.grabber.stream_stop()
-
-        if self.grabber.is_device_valid:
-            self.grabber.device_save_state_to_file(self.device_file)
 
     def customEvent(self, ev: QEvent):
         if ev.type() == DEVICE_LOST_EVENT:
@@ -280,6 +314,88 @@ class MainWindow(QMainWindow):
             QMessageBox.critical(self, "", f"{e}", QMessageBox.StandardButton.Ok)
 
         self.updateControls()
+
+    def on_click(self, event):
+        if len(self.points) < 3:
+            pt = event.position().toPoint()
+            self.points.append(pt)
+        else:
+            self.reset_points()
+        pass
+
+    def reset_points(self):
+        self.points.clear()
+
+    def save_histogram(self):
+        filename, _ = QFileDialog.getSaveFileName(
+            self, "Save Histogram Image", "", "PNG Images (*.png);;All Files (*)"
+        )
+        if not filename:
+            return
+
+        export_layout = pg.GraphicsLayout()
+        export_layout.addItem(self.hist_r.plotItem)
+        export_layout.nextRow()
+        export_layout.addItem(self.hist_g.plotItem)
+        export_layout.nextRow()
+        export_layout.addItem(self.hist_b.plotItem)
+
+        exporter = pg.exporters.ImageExporter(export_layout)
+        exporter.export(filename)
+        print(f"Histogram saved to: {filename}")
+
+    def update_frame(self):
+        if not self.grabber or not self.grabber.is_streaming:
+            return
+
+        # frame = self.sink.snap_single(timeout=1000)
+        # if frame is None:
+        #     return
+        buf = self.sink.pop_output_buffer()
+        self.curr_image_array = buf.numpy_copy()
+
+        img = self.curr_image_array
+        if img.ndim != 3:
+            return
+
+        buf.release()
+
+        h, w, _ = img.shape
+        qimg = QImage(img.data, w, h, w * 3, QImage.Format_RGB888)
+        pix = QPixmap.fromImage(qimg).scaled(self.image_label.size())
+
+        painter = QPainter(pix)
+        pen = QPen(pg.mkColor('y'))
+        pen.setWidth(3)
+        painter.setPen(pen)
+        for pt in self.points:
+            painter.drawEllipse(pt, 5, 5)
+        painter.end()
+
+        self.image_label.setPixmap(pix)
+
+        if len(self.points) == 3:
+            self.update_histogram(img)
+
+    def update_histogram(self, img):
+        region_size = 5
+        chans = {'r': [], 'g': [], 'b': []}
+
+        for pt in self.points:
+            x, y = pt.x(), pt.y()
+            region = img[max(0, y - region_size):y + region_size,
+                         max(0, x - region_size):x + region_size]
+            chans['r'].extend(region[:, :, 0].flatten())
+            chans['g'].extend(region[:, :, 1].flatten())
+            chans['b'].extend(region[:, :, 2].flatten())
+
+        r_hist, _ = np.histogram(chans['r'], bins=256, range=(0, 255))
+        g_hist, _ = np.histogram(chans['g'], bins=256, range=(0, 255))
+        b_hist, _ = np.histogram(chans['b'], bins=256, range=(0, 255))
+
+        self.curve_r.setData(r_hist)
+        self.curve_g.setData(g_hist)
+        self.curve_b.setData(b_hist)
 
 if __name__ == "__main__":
     with ic4.Library.init_context():
