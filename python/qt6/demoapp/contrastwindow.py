@@ -11,8 +11,34 @@ from resourceselector import ResourceSelector
 
 DEVICE_LOST_EVENT = QEvent.Type(QEvent.Type.User + 2)
 
+class ClickableDisplayWidget(DisplayWidget):
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+    
+    def mousePressEvent(self, event):
+        # Get mouse position relative to the widget
+        pos = event.position().toPoint()
+
+        # Get widget size
+        widget_width = self.width()
+        widget_height = self.height()
+
+        # Convert to relative (normalized) coordinates (0.0–1.0)
+        rel_x = pos.x() / widget_width
+        rel_y = pos.y() / widget_height
+
+        print(f"Mouse clicked at: {pos.x()}, {pos.y()} (relative: {rel_x:.2f}, {rel_y:.2f})")
+
+        img_x = int(rel_x * self.image_width)
+        img_y = int(rel_y * self.image_height)
+        print(f"Image pixel coordinates: ({img_x}, {img_y})")
+
+        super().mousePressEvent(event)  # Pass the event to base class
+
 class MainWindow(QMainWindow):
-    curr_image_array = None
+    curr_image_array = None,
+    image_width,
+    image_height
 
     def __init__(self):
         QMainWindow.__init__(self)
