@@ -1,7 +1,7 @@
 import sys
 import numpy as np
 import imagingcontrol4 as ic4
-import imagingcontrol4.ui as ic4ui
+import imagingcontrol4.pyside6 as ic4ui
 from PySide6.QtWidgets import (
     QApplication, QMainWindow, QLabel, QPushButton,
     QVBoxLayout, QWidget, QHBoxLayout, QFileDialog
@@ -9,15 +9,19 @@ from PySide6.QtWidgets import (
 from PySide6.QtGui import QImage, QPixmap, QPainter, QPen
 from PySide6.QtCore import QTimer
 import pyqtgraph as pg
-import pyqtgraph.exporters
 
 
 class CameraApp(QMainWindow):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("Live RGB Histograms - ImagingControl4 (with Grabber)")
+        self.setWindowTitle("Live RGB Histograms - ImagingControl4")
 
         # === UI Elements ===
+        self.display_widget = ic4.pyside6.DisplayWidget()
+        self.display = self.display_widget.as_display()
+        self.display.set_render_position(ic4.DisplayRenderPosition.STRETCH_TOPLEFT)
+
+
         self.image_label = QLabel()
         self.image_label.setFixedSize(640, 480)
         self.image_label.mousePressEvent = self.on_click
@@ -54,7 +58,7 @@ class CameraApp(QMainWindow):
 
         layout = QVBoxLayout()
         layout.addLayout(button_layout)
-        layout.addWidget(self.image_label)
+        layout.addWidget(self.display_widget)
         layout.addWidget(self.hist_r)
         layout.addWidget(self.hist_g)
         layout.addWidget(self.hist_b)
@@ -64,7 +68,7 @@ class CameraApp(QMainWindow):
         self.setCentralWidget(container)
 
         # App state
-        self.grabber: ic4.Grabber | None = None
+        self.grabber = ic4.Grabber()
         self.points = []
 
         # Timer for updating camera feed
@@ -73,14 +77,12 @@ class CameraApp(QMainWindow):
         self.timer.start(100)
 
     def select_camera(self):
-        dialog = ic4ui.DeviceSelectionDialog()
+        dialog = ic4ui.DeviceSelectionDialog(self.grabber, parent=self)
         if dialog.exec():
-            if self.grabber:
-                self.grabber.stop_live()
-                self.grabber.close()
-            self.grabber = dialog.grabber
-            self.grabber.stream_format = self.grabber.stream_formats[0]  # RGB24 by default
-            self.grabber.start_live(show_display=False)
+            if self.grabber.is_streaming:
+                self.grabber.stream_stop()
+            # self.grabber.stream_format = self.grabber.stream_formats[0]  # RGB24 by default
+            self.grabber.stream_setup(None, self.display)
 
     def open_properties(self):
         if self.grabber:
@@ -97,7 +99,7 @@ class CameraApp(QMainWindow):
             self.reset_points()
 
     def update_frame(self):
-        if not self.grabber or not self.grabber.is_live:
+        if not self.grabber or not self.grabber.is_streaming:
             return
 
         frame = self.grabber.snap_image(timeout=1000)
@@ -165,14 +167,24 @@ class CameraApp(QMainWindow):
 
     def closeEvent(self, event):
         if self.grabber:
-            self.grabber.stop_live()
+            self.grabber.stream_stop()
             self.grabber.close()
         super().closeEvent(event)
 
 
 if __name__ == "__main__":
-    app = QApplication(sys.argv)
-    window = CameraApp()
-    window.resize(800, 900)
-    window.show()
-    sys.exit(app.exec())
+    # This is just the default Qt main function template, with added call to Library.init_context()
+    from sys import argv
+
+    app = QApplication(argv)
+    app.setStyle("fusion")
+
+    with ic4.Library.init_context():
+
+        window = CameraApp()
+        window.resize(800, 900)
+        window.show()
+
+        app.exec()
+    
+        sys.exit(app.exec())

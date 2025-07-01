@@ -9,35 +9,13 @@ import imagingcontrol4 as ic4
 
 from resourceselector import ResourceSelector
 
-GOT_PHOTO_EVENT = QEvent.Type(QEvent.Type.User + 1)
 DEVICE_LOST_EVENT = QEvent.Type(QEvent.Type.User + 2)
-
-class GotPhotoEvent(QEvent):
-    def __init__(self, buffer: ic4.ImageBuffer):
-        QEvent.__init__(self, GOT_PHOTO_EVENT)
-        self.image_buffer = buffer
 
 class MainWindow(QMainWindow):
     curr_image_array = None
 
     def __init__(self):
         QMainWindow.__init__(self)
-
-        # Make sure the %appdata%/demoapp directory exists
-        appdata_directory = QStandardPaths.writableLocation(QStandardPaths.AppDataLocation)
-        QDir(appdata_directory).mkpath(".")
-
-        self.save_pictures_directory = QStandardPaths.writableLocation(QStandardPaths.PicturesLocation)
-        self.save_videos_directory = QStandardPaths.writableLocation(QStandardPaths.MoviesLocation)
-
-        self.device_file = appdata_directory + "/device.json"
-        self.codec_config_file = appdata_directory + "/codecconfig.json"
-
-        self.shoot_photo_mutex = Lock()
-        self.shoot_photo = False
-
-        self.capture_to_video = False
-        self.video_capture_pause = False
 
         self.grabber = ic4.Grabber()
         self.grabber.event_add_device_lost(lambda g: QApplication.postEvent(self, QEvent(DEVICE_LOST_EVENT)))
@@ -61,25 +39,10 @@ class MainWindow(QMainWindow):
                 # This allows for properties backed by chunk data to be updated
                 self.device_property_map.connect_chunkdata(buf)
 
-                with self.shoot_photo_mutex:
-                    if self.shoot_photo:
-                        self.shoot_photo = False
-
-                        # Send an event to the main thread with a reference to 
-                        # the main thread of our GUI. 
-                        QApplication.postEvent(self, GotPhotoEvent(buf))
-
-                if self.capture_to_video and not self.video_capture_pause:
-                    try:
-                        self.video_writer.add_frame(buf)
-                    except ic4.IC4Exception as ex:
-                        pass
 
         self.sink = ic4.QueueSink(Listener())
 
         self.property_dialog = None
-
-        self.video_writer = ic4.VideoWriter(ic4.VideoWriterType.MP4_H264)
 
         self.createUI()
 
@@ -89,18 +52,6 @@ class MainWindow(QMainWindow):
         except Exception as e:
             QMessageBox.critical(self, "", f"{e}", QMessageBox.StandardButton.Ok)
 
-        if QFileInfo.exists(self.device_file):
-            try:
-                self.grabber.device_open_from_state_file(self.device_file)
-                self.onDeviceOpened()
-            except ic4.IC4Exception as e:
-                QMessageBox.information(self, "", f"Loading last used device failed: {e}", QMessageBox.StandardButton.Ok)
-
-        if QFileInfo.exists(self.codec_config_file):
-            try:
-                self.video_writer.property_map.deserialize_from_file(self.codec_config_file)
-            except ic4.IC4Exception as e:
-                QMessageBox.information(self, "", f"Loading last codec configuration failed: {e}", QMessageBox.StandardButton.Ok)
 
         self.updateControls()
 
@@ -132,28 +83,6 @@ class MainWindow(QMainWindow):
         self.start_live_act.setCheckable(True)
         self.start_live_act.triggered.connect(self.startStopStream)
 
-        self.shoot_photo_act = QAction(selector.loadIcon("images/photo.png"), "&Shoot Photo", self)
-        self.shoot_photo_act.setStatusTip("Shoot and save a photo")
-        self.shoot_photo_act.triggered.connect(self.onShootPhoto)
-
-        self.record_start_act = QAction(selector.loadIcon("images/recordstart.png"), "&Capture Video", self)
-        self.record_start_act.setToolTip("Capture vidoeo into MP4 file")
-        self.record_start_act.setCheckable(True)
-        self.record_start_act.triggered.connect(self.onStartStopCaptureVideo)
-
-        self.record_pause_act = QAction(selector.loadIcon("images/recordpause.png"), "&Pause Capture Video", self)
-        self.record_pause_act.setStatusTip("Pause video capture")
-        self.record_pause_act.setCheckable(True)
-        self.record_pause_act.triggered.connect(self.onPauseCaptureVideo)
-
-        self.record_stop_act = QAction(selector.loadIcon("images/recordstop.png"), "&Stop Capture Video", self)
-        self.record_stop_act.setStatusTip("Stop video capture")
-        self.record_stop_act.triggered.connect(self.onStopCaptureVideo)
-
-        self.codec_property_act = QAction(selector.loadIcon("images/gear.png"), "&Codec Properties", self)
-        self.codec_property_act.setStatusTip("Configure the video codec")
-        self.codec_property_act.triggered.connect(self.onCodecProperties)
-
         self.close_device_act = QAction("Close", self)
         self.close_device_act.setStatusTip("Close the currently opened device")
         self.close_device_act.setShortcuts(QKeySequence.Close)
@@ -164,25 +93,6 @@ class MainWindow(QMainWindow):
         exit_act.setStatusTip("Exit program")
         exit_act.triggered.connect(self.close)
 
-        file_menu = self.menuBar().addMenu("&File")
-        file_menu.addAction(exit_act)
-
-        device_menu = self.menuBar().addMenu("&Device")
-        device_menu.addAction(self.device_select_act)
-        device_menu.addAction(self.device_properties_act)
-        device_menu.addAction(self.device_driver_properties_act)
-        device_menu.addAction(self.trigger_mode_act)
-        device_menu.addAction(self.start_live_act)
-        device_menu.addSeparator()
-        device_menu.addAction(self.close_device_act)
-
-        capture_menu = self.menuBar().addMenu("&Capture")
-        capture_menu.addAction(self.shoot_photo_act)
-        capture_menu.addAction(self.record_start_act)
-        capture_menu.addAction(self.record_pause_act)
-        capture_menu.addAction(self.record_stop_act)
-        capture_menu.addAction(self.codec_property_act)
-
         toolbar = QToolBar(self)
         self.addToolBar(Qt.TopToolBarArea, toolbar)
         toolbar.addAction(self.device_select_act)
@@ -191,13 +101,6 @@ class MainWindow(QMainWindow):
         toolbar.addAction(self.trigger_mode_act)
         toolbar.addSeparator()
         toolbar.addAction(self.start_live_act)
-        toolbar.addSeparator()
-        toolbar.addAction(self.shoot_photo_act)
-        toolbar.addSeparator()
-        toolbar.addAction(self.record_start_act)
-        toolbar.addAction(self.record_pause_act)
-        toolbar.addAction(self.record_stop_act)
-        toolbar.addAction(self.codec_property_act)
 
         self.video_widget = ic4.pyside6.DisplayWidget()
         self.video_widget.setMinimumSize(640, 480)
@@ -238,8 +141,6 @@ class MainWindow(QMainWindow):
     def customEvent(self, ev: QEvent):
         if ev.type() == DEVICE_LOST_EVENT:
             self.onDeviceLost()
-        elif ev.type() == GOT_PHOTO_EVENT:
-            self.savePhoto(ev.image_buffer)
 
     def onSelectDevice(self):
         dlg = ic4.pyside6.DeviceSelectionDialog(self.grabber, parent=self)
@@ -270,10 +171,6 @@ class MainWindow(QMainWindow):
             self.device_property_map.set_value(ic4.PropId.TRIGGER_MODE, self.trigger_mode_act.isChecked())
         except ic4.IC4Exception as e:
             QMessageBox.critical(self, "", f"{e}", QMessageBox.StandardButton.Ok)
-
-    def onShootPhoto(self):
-        with self.shoot_photo_mutex:
-            self.shoot_photo = True
 
     def onUpdateStatisticsTimer(self):
         if not self.grabber.is_device_valid:
@@ -334,10 +231,6 @@ class MainWindow(QMainWindow):
         self.device_driver_properties_act.setEnabled(self.grabber.is_device_valid)
         self.start_live_act.setEnabled(self.grabber.is_device_valid)
         self.start_live_act.setChecked(self.grabber.is_streaming)
-        self.shoot_photo_act.setEnabled(self.grabber.is_streaming)
-        self.record_stop_act.setEnabled(self.capture_to_video)
-        self.record_pause_act.setChecked(self.video_capture_pause)
-        self.record_start_act.setChecked(self.capture_to_video)
         self.close_device_act.setEnabled(self.grabber.is_device_open)
 
         self.updateTriggerControl(None)
@@ -349,61 +242,11 @@ class MainWindow(QMainWindow):
         except ic4.IC4Exception:
             self.camera_label.setText("No Device")
 
-    def onPauseCaptureVideo(self):
-        self.video_capture_pause = self.record_pause_act.isChecked()
-
-    def onStartStopCaptureVideo(self):
-        if self.capture_to_video:
-            self.stopCapturevideo()
-            return
-        
-        filters = [
-            "MP4 Video Files (*.mp4)"
-        ]
-        
-        dialog = QFileDialog(self, "Capture Video")
-        dialog.setNameFilters(filters)
-        dialog.setFileMode(QFileDialog.FileMode.AnyFile)
-        dialog.setAcceptMode(QFileDialog.AcceptMode.AcceptSave)
-        dialog.setDirectory(self.save_videos_directory)
-
-        if dialog.exec():
-            full_path = dialog.selectedFiles()[0]
-            self.save_videos_directory = QFileInfo(full_path).absolutePath()
-
-            fps = float(25)
-            try:
-                fps = self.device_property_map.get_value_float(ic4.PropId.ACQUISITION_FRAME_RATE)
-            except:
-                pass
-
-            try:
-                self.video_writer.begin_file(full_path, self.sink.output_image_type, fps)
-            except ic4.IC4Exception as e:
-                QMessageBox.critical(self, "", f"{e}", QMessageBox.StandardButton.Ok)
-
-            self.capture_to_video = True
-            
-        self.updateControls()
-
-    def onStopCaptureVideo(self):
-        self.capture_to_video = False
-        self.video_writer.finish_file()
-        self.updateControls()
-
-    def onCodecProperties(self):
-        dlg = ic4.pyside6.PropertyDialog(self.video_writer.property_map, self, "Codec Settings")
-        # set default vis
-        if dlg.exec() == 1:
-            self.video_writer.property_map.serialize_to_file(self.codec_config_file)
-
     def startStopStream(self):
         try:
             if self.grabber.is_device_valid:
                 if self.grabber.is_streaming:
                     self.grabber.stream_stop()
-                    if self.capture_to_video:
-                        self.onStopCaptureVideo()
                 else:
                     self.grabber.stream_setup(self.sink, self.display)
 
@@ -412,42 +255,14 @@ class MainWindow(QMainWindow):
 
         self.updateControls()
 
-    def savePhoto(self, image_buffer: ic4.ImageBuffer):
-        filters = [
-            "Bitmap(*.bmp)",
-            "JPEG (*.jpg)",
-            "Portable Network Graphics (*.png)",
-            "TIFF (*.tif)"
-        ]
-        
-        dialog = QFileDialog(self, "Save Photo")
-        dialog.setNameFilters(filters)
-        dialog.setFileMode(QFileDialog.FileMode.AnyFile)
-        dialog.setAcceptMode(QFileDialog.AcceptMode.AcceptSave)
-        dialog.setDirectory(self.save_pictures_directory)
+if __name__ == "__main__":
+    with ic4.Library.init_context():
+        app = QApplication()
+        app.setApplicationName("ic4-demoapp")
+        app.setApplicationDisplayName("IC4 Demo Application")
+        app.setStyle("fusion")
 
-        if dialog.exec():
-            selected_filter = dialog.selectedNameFilter()
+        w = MainWindow()
+        w.show()
 
-            full_path = dialog.selectedFiles()[0]
-            self.save_pictures_directory = QFileInfo(full_path).absolutePath()
-
-            try:
-                if selected_filter == filters[0]:
-                    image_buffer.save_as_bmp(full_path)
-                elif selected_filter == filters[1]:
-                    image_buffer.save_as_jpeg(full_path)
-                elif selected_filter == filters[2]:
-                    image_buffer.save_as_png(full_path)
-                else:
-                    image_buffer.save_as_tiff(full_path)
-            except ic4.IC4Exception as e:
-                QMessageBox.critical(self, "", f"{e}", QMessageBox.StandardButton.Ok)
-
-
-    def mousePressEvent(self, event):
-        if self.color_window is None:
-            return
-        if event.button() == Qt.RightButton:
-            self.color_window.get_colors_at_cursor(event.globalPos())
-            print("Mouse clicked at position: ", event.globalPos()) #TODO: should probably switch this to be a window local coordinate
+        app.exec()
